@@ -207,6 +207,14 @@ for key, default in {
 def is_logged_in() -> bool:
     return st.session_state.user is not None
 
+def authed_client():
+    """アクセストークンをセットした認証済みSupabaseクライアントを返す。
+    RLS が正しく機能するために、DB操作は必ずこれ経由で行う。"""
+    token = st.session_state.get("access_token")
+    if token:
+        supabase.postgrest.auth(token)
+    return supabase
+
 def do_logout():
     try:
         supabase.auth.sign_out()
@@ -269,7 +277,6 @@ if not is_logged_in():
                             st.error("メールアドレスまたはパスワードが違います。")
                         else:
                             st.error(f"ログインに失敗しました: {err}")
-                            st.write(type(e), vars(e) if hasattr(e, '__dict__') else "")
 
         # ---- サインアップタブ ----
         with tab_signup:
@@ -314,9 +321,17 @@ if not is_logged_in():
                         err = str(e)
                         if "already registered" in err or "User already registered" in err:
                             st.error("このメールアドレスはすでに登録されています。ログインしてください。")
+                        elif "rate limit" in err or "over_email_send_rate_limit" in err:
+                            st.warning(
+                                "⏳ メール送信の上限に達しました。\n\n"
+                                "**原因:** Supabase の「Confirm email」がまだオンになっている可能性があります。\n\n"
+                                "**対処法:**\n"
+                                "1. Supabase ダッシュボード → Authentication → Sign In / Up → Email\n"
+                                "2. **Confirm email をオフ** にして保存\n"
+                                "3. しばらく待ってから再試行（または別のメールアドレスで試す）"
+                            )
                         else:
                             st.error(f"登録に失敗しました: {err}")
-                            st.write(type(e), vars(e) if hasattr(e, '__dict__') else "")
 
 # ============================================================
 # 7. メイン画面（ログイン後）
@@ -373,7 +388,7 @@ else:
 
             # Supabaseへ保存（username の代わりに user_id で紐付け）
             try:
-                supabase.table("fitness_history").insert({
+                authed_client().table("fitness_history").insert({
                     "user_id":      user_id,
                     "username":     display_name,   # 表示用に残す（任意）
                     "weight_kg":    round(weight_kg, 1),
@@ -396,7 +411,7 @@ else:
             history_context = ""
             try:
                 hist = (
-                    supabase.table("fitness_history")
+                    authed_client().table("fitness_history")
                     .select("*")
                     .eq("user_id", user_id)
                     .order("created_at", desc=True)
@@ -459,7 +474,7 @@ else:
 
         try:
             db_res = (
-                supabase.table("fitness_history")
+                authed_client().table("fitness_history")
                 .select("*")
                 .eq("user_id", user_id)
                 .order("created_at", desc=False)
